@@ -9,12 +9,17 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "@upstash/redis": "^1.36.0",
     "next": "16.1.1",
     "react": "19.2.3",
-    "react-dom": "19.2.3"
+    "react-dom": "19.2.3",
+    "xero-node": "^13.3.0",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
+    "@types/node": "25.0.3",
+    "@types/react": "19.2.7",
     "eslint": "^9",
     "eslint-config-next": "16.1.1",
     "tailwindcss": "^4"
