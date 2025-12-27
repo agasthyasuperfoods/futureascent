@@ -10,6 +10,7 @@ export const xero = new XeroClient({
     "profile",
     "email",
     "accounting.contacts.read",
+    "accounting.contacts",
     "accounting.settings.read", // 🔑 REQUIRED (IMPORTANT)
     "offline_access",
   ],
