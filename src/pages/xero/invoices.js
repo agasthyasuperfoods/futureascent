@@ -2,6 +2,7 @@
 import { useState } from "react";
 import Papa from "papaparse";
 import { useRouter } from "next/router";
+import Swal from "sweetalert2";
 
 const PREFIX = "METCASH FOOD & GROCERY PTY LTD - ";
 
@@ -47,6 +48,12 @@ function parseNumber(value) {
 function parseInvoiceDate(rawDate) {
   if (!rawDate) return null;
   const cleaned = String(rawDate).trim();
+
+  const withoutTime = cleaned.split(" ")[0];
+  if (/^\d{2}\/\d{2}\/\d{4}$/.test(withoutTime)) {
+    const [dd, mm, yyyy] = withoutTime.split("/");
+    return `${yyyy}-${mm.padStart(2, "0")}-${dd.padStart(2, "0")}`;
+  }
 
   if (/^\d{4}-\d{2}-\d{2}$/.test(cleaned)) {
     return cleaned;
@@ -155,6 +162,7 @@ export default function Invoices() {
             "invoicedate",
             "date",
             "transaction date",
+            "order date",
           ]);
 
           const issueDate = parseInvoiceDate(rawDate);
@@ -170,6 +178,7 @@ export default function Invoices() {
               "product",
               "item",
               "item name",
+              "product name",
             ]) || "Sales Item";
 
           const quantity = parseNumber(
@@ -180,6 +189,8 @@ export default function Invoices() {
               "quantity",
               "units",
               "units sold",
+              "ordered qty",
+              "approved qty",
             ]) || 1
           );
 
@@ -194,11 +205,19 @@ export default function Invoices() {
               "extended price",
               "sell price",
               "net amount",
+              "total ex gst",
+              "total (ex gst)",
             ])
           );
 
           let unitAmount = parseNumber(
-            getFirstValue(row, ["unit price", "rate", "price"])
+            getFirstValue(row, [
+              "unit price",
+              "rate",
+              "price",
+              "price (excl gst)",
+              "price excl gst",
+            ])
           );
 
           if ((!unitAmount || Number.isNaN(unitAmount)) && lineAmount > 0) {
@@ -209,7 +228,14 @@ export default function Invoices() {
             continue;
           }
 
-          const invoiceKey = `${cleanId}__${issueDate}`;
+          const orderNumber = getFirstValue(row, [
+            "order number",
+            "order no",
+          ]);
+
+          const invoiceKey = orderNumber
+            ? String(orderNumber).trim()
+            : `${cleanId}__${issueDate}`;
           if (!invoices[invoiceKey]) {
             invoices[invoiceKey] = {
               accountId: cleanId,
@@ -276,21 +302,35 @@ export default function Invoices() {
       const result = await res.json();
 
       if (!res.ok) {
-        alert(result?.error || "❌ Failed to create invoices");
+        await Swal.fire({
+          icon: "error",
+          title: "Invoice creation failed",
+          text: result?.error || "Failed to create invoices",
+        });
         return;
       }
 
       if (result.errorCount > 0) {
-        alert(
-          `⚠️ Created ${result.createdCount} invoice(s), ${result.errorCount} failed`
-        );
+        await Swal.fire({
+          icon: "warning",
+          title: "Partial success",
+          text: `Created ${result.createdCount} invoice(s), ${result.errorCount} failed`,
+        });
         return;
       }
 
-      alert("✅ Invoices created successfully in Xero");
+      await Swal.fire({
+        icon: "success",
+        title: "Invoices created",
+        text: "Invoices created successfully in Xero",
+      });
     } catch (err) {
       console.error(err);
-      alert("❌ Failed to create invoices");
+      await Swal.fire({
+        icon: "error",
+        title: "Invoice creation failed",
+        text: "Failed to create invoices",
+      });
     } finally {
       setLoading(false);
     }
