@@ -14,6 +14,21 @@ export default function Createcustomers() {
   const [existing, setExisting] = useState([]);
   const [conflicts, setConflicts] = useState([]);
   const [newCustomers, setNewCustomers] = useState([]);
+  function updateShippingAddress(accountId, updates) {
+    setNewCustomers((prev) =>
+      prev.map((c) =>
+        c.accountId === accountId
+          ? {
+              ...c,
+              shippingAddress: {
+                ...c.shippingAddress,
+                ...updates,
+              },
+            }
+          : c
+      )
+    );
+  }
 
   /* =========================
      CSV UPLOAD + PROCESS
@@ -90,6 +105,7 @@ export default function Createcustomers() {
 
             neu.push({
               ...row,
+              addressMissing: !db.found,
               shippingAddress: db.found
                 ? {
                     line1: db.customer.address_line1,
@@ -236,7 +252,7 @@ export default function Createcustomers() {
                     <td className="p-2">{c.accountId}</td>
                     <td className="p-2">{c.name}</td>
                     <td className="p-2">
-                      {c.shippingAddress.line1 ? (
+                      {!c.addressMissing ? (
                         <>
                           <div>{c.shippingAddress.line1}</div>
                           <div>
@@ -246,7 +262,16 @@ export default function Createcustomers() {
                           </div>
                         </>
                       ) : (
-                        <span className="text-red-500">Not found in DB</span>
+                        <input
+                          type="text"
+                          value={c.shippingAddress.line1}
+                          onChange={(e) =>
+                            updateShippingAddress(c.accountId, {
+                              line1: e.target.value,
+                            })
+                          }
+                          className="w-full border rounded px-2 py-1 text-sm"
+                        />
                       )}
                     </td>
                   </tr>

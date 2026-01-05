@@ -1,11 +1,12 @@
 // src/pages/api/xero/status.js
-import { redis } from "../../../lib/xeroRedisStore";
+import { getXeroToken } from "../../../lib/xeroRedisStore";
 
 export default async function handler(req, res) {
   try {
-    const accessToken = await redis.get("xero:access_token");
-    const tenantId = await redis.get("xero:tenant_id");
-    const expiresAt = await redis.get("xero:expires_at");
+    const auth = await getXeroToken();
+    const accessToken = auth?.accessToken;
+    const tenantId = auth?.tenantId;
+    const expiresAt = auth?.expiresAt;
 
     // ❌ Missing data
     if (!accessToken || !tenantId || !expiresAt) {

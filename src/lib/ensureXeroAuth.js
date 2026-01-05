@@ -1,14 +1,16 @@
     // src/lib/ensureXeroAuth.js
 import { xero } from "./xero";
-import { redis } from "./xeroRedisStore";
+import { getXeroToken, saveXeroToken } from "./xeroRedisStore";
 
 export async function ensureXeroAuth() {
-  const accessToken = await redis.get("xero:access_token");
-  const refreshToken = await redis.get("xero:refresh_token");
-  const expiresAt = await redis.get("xero:expires_at");
+  const data = await getXeroToken();
+  const accessToken = data?.accessToken;
+  const refreshToken = data?.refreshToken;
+  const expiresAt = data?.expiresAt;
+  const tenantId = data?.tenantId;
 
   // ❌ Never connected
-  if (!accessToken || !refreshToken) {
+  if (!accessToken || !refreshToken || !tenantId) {
     throw new Error("Xero not connected");
   }
 
@@ -16,12 +18,13 @@ export async function ensureXeroAuth() {
   if (expiresAt && Date.now() > Number(expiresAt)) {
     const newTokenSet = await xero.refreshToken(refreshToken);
 
-    await redis.set("xero:access_token", newTokenSet.access_token);
-    await redis.set("xero:refresh_token", newTokenSet.refresh_token);
-    await redis.set(
-      "xero:expires_at",
-      Date.now() + newTokenSet.expires_in * 1000
-    );
+    const newExpiresAt = Date.now() + newTokenSet.expires_in * 1000;
+    await saveXeroToken({
+      tenantId,
+      accessToken: newTokenSet.access_token,
+      refreshToken: newTokenSet.refresh_token,
+      expiresAt: newExpiresAt,
+    });
 
     await xero.setTokenSet(newTokenSet);
     return;
@@ -31,6 +34,7 @@ export async function ensureXeroAuth() {
   await xero.setTokenSet({
     access_token: accessToken,
     refresh_token: refreshToken,
-    expires_at: Number(expiresAt),
+    expires_at: Math.floor(Number(expiresAt) / 1000),
+    token_type: "Bearer",
   });
 }

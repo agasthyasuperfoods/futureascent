@@ -5,7 +5,13 @@ export async function getAuthorizedXero() {
   await xero.initialize();
 
   const data = await getXeroToken();
-  if (!data) {
+  if (
+    !data ||
+    !data.tenantId ||
+    !data.accessToken ||
+    !data.refreshToken ||
+    !data.expiresAt
+  ) {
     throw new Error("Xero not connected");
   }
 
@@ -13,6 +19,13 @@ export async function getAuthorizedXero() {
 
   // 🔄 Refresh token if expired
   if (data.expiresAt <= now) {
+    await xero.setTokenSet({
+      access_token: data.accessToken,
+      refresh_token: data.refreshToken,
+      token_type: "Bearer",
+      expires_at: Math.floor(data.expiresAt / 1000),
+    } as any);
+
     const newToken = await xero.refreshToken();
 
     const expiresAt =
@@ -38,7 +51,7 @@ export async function getAuthorizedXero() {
     access_token: data.accessToken,
     refresh_token: data.refreshToken,
     token_type: "Bearer",
-    expires_in: 0,
+    expires_at: Math.floor(data.expiresAt / 1000),
   } as any);
 
   return {

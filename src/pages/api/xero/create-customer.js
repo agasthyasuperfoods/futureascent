@@ -1,5 +1,4 @@
-import { xero } from "../../../lib/xero";
-import { getXeroToken } from "../../../lib/xeroRedisStore";
+import { getAuthorizedXero } from "../../../lib/xeroAuthRedis";
 
 export default async function handler(req, res) {
   try {
@@ -16,18 +15,7 @@ export default async function handler(req, res) {
     }
 
     /* ---------- AUTH ---------- */
-    const auth = await getXeroToken();
-    if (!auth?.accessToken) {
-      return res.status(401).json({ error: "Xero not authenticated" });
-    }
-
-    xero.setTokenSet({
-      access_token: auth.accessToken,
-      refresh_token: auth.refreshToken,
-      expires_at: auth.expiresAt,
-    });
-
-    const tenantId = auth.tenantId;
+    const { xero, tenantId } = await getAuthorizedXero();
 
     /* ---------- CONTACT (SDK FORMAT) ---------- */
     const contact = {
