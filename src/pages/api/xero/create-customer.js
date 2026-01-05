@@ -7,7 +7,7 @@ export default async function handler(req, res) {
       return res.status(405).json({ error: "Method not allowed" });
     }
 
-    const { accountId, name } = req.body;
+    const { accountId, name, deliveryAddress } = req.body;
 
     if (!accountId || !name) {
       return res.status(400).json({
@@ -15,13 +15,12 @@ export default async function handler(req, res) {
       });
     }
 
-    // 🔐 Load token from Redis
+    /* ---------- AUTH ---------- */
     const auth = await getXeroToken();
-    if (!auth || !auth.accessToken) {
+    if (!auth?.accessToken) {
       return res.status(401).json({ error: "Xero not authenticated" });
     }
 
-    // ✅ Apply token to SDK
     xero.setTokenSet({
       access_token: auth.accessToken,
       refresh_token: auth.refreshToken,
@@ -30,35 +29,56 @@ export default async function handler(req, res) {
 
     const tenantId = auth.tenantId;
 
-    // ✅ CORRECT PAYLOAD (THIS WAS THE ISSUE)
-    const payload = {
-      contacts: [
-        {
-          name,
-          accountNumber: accountId,
-          isCustomer: true,
-        },
-      ],
+    /* ---------- CONTACT (SDK FORMAT) ---------- */
+    const contact = {
+      name: name,
+      accountNumber: accountId,
+      isCustomer: true,
     };
 
+    if (deliveryAddress) {
+      contact.addresses = [
+        {
+          addressType: "DELIVERY",
+          addressLine1: deliveryAddress.addressLine1,
+          city: deliveryAddress.city,
+          region: deliveryAddress.region,
+          postalCode: deliveryAddress.postalCode,
+          country: deliveryAddress.country,
+        },
+        {
+          addressType: "STREET",
+          addressLine1: deliveryAddress.addressLine1,
+          city: deliveryAddress.city,
+          region: deliveryAddress.region,
+          postalCode: deliveryAddress.postalCode,
+          country: deliveryAddress.country,
+        },
+      ];
+    }
+
+    /* ---------- CREATE / UPDATE ---------- */
     const response = await xero.accountingApi.createContacts(
       tenantId,
-      payload
+      {
+        contacts: [contact], // ⚠️ lowercase `contacts`
+      }
     );
 
-    const created = response.body.contacts?.[0];
+    const saved = response.body.contacts?.[0];
 
     return res.json({
       success: true,
-      contactId: created.contactID,
-      name: created.name,
-      accountId: created.accountNumber,
+      contactId: saved.contactID,
+      name: saved.name,
+      accountId: saved.accountNumber,
+      addressSaved: !!deliveryAddress,
     });
-  } catch (err) {
-    console.error("XERO CREATE ERROR:", err?.response?.body || err);
 
+  } catch (err) {
+    console.error("XERO ERROR:", err?.response?.body || err);
     return res.status(500).json({
-      error: "Failed to create customer",
+      error: "Xero operation failed",
       details: err?.response?.body || err.message,
     });
   }

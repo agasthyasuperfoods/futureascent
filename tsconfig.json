@@ -23,7 +23,7 @@
     "**/*.mts",
     "**/*.ts",
     "**/*.tsx"
-  ],
+, "src/lib/db.js", "src/pages/api/customers/lookup.js"  ],
   "exclude": [
     "node_modules"
   ]

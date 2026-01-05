@@ -1,348 +1,307 @@
 "use client";
 import { useState } from "react";
 import Papa from "papaparse";
+import { useRouter } from "next/router";
 
-/* 🔑 CONSTANT PREFIX */
-const METCASH_PREFIX = "METCASH FOOD & GROCERY PTY LTD - ";
+const PREFIX = "METCASH FOOD & GROCERY PTY LTD - ";
 
 export default function Createcustomers() {
-  const [step, setStep] = useState(1);
-  const [rows, setRows] = useState([]);
-  const [existing, setExisting] = useState([]);
-  const [missing, setMissing] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [fileName, setFileName] = useState("");
+  const router = useRouter();
 
-  /* ===============================
-     STEP 1 — UPLOAD & PARSE CSV
-     =============================== */
+  const [fileName, setFileName] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  const [existing, setExisting] = useState([]);
+  const [conflicts, setConflicts] = useState([]);
+  const [newCustomers, setNewCustomers] = useState([]);
+
+  /* =========================
+     CSV UPLOAD + PROCESS
+     ========================= */
   function handleFile(e) {
     const file = e.target.files[0];
     if (!file) return;
 
     setFileName(file.name);
+    setLoading(true);
 
     Papa.parse(file, {
       header: true,
       skipEmptyLines: true,
-      complete: (result) => {
-        const parsed = [];
+      complete: async (result) => {
+
+        /* ---------- STEP 1: DEDUP ---------- */
+        const map = new Map();
 
         result.data.forEach((row) => {
-          const customerId =
-            row["Customer ID"] ||
+          const accountId =
             row["Account ID"] ||
+            row["Customer ID"] ||
             row["AccountID"];
 
-          const retailerName =
+          const rawName =
             row["Retailer"] ||
-            row["Customer Name"] ||
-            row["Account Name"] ||
-            row["Store Name"];
+            row["Store Name"] ||
+            row["Customer Name"];
 
-          if (!customerId) return;
+          if (!accountId || !rawName) return;
 
-          parsed.push({
-            customerId: customerId.trim(),
-            retailerName: retailerName
-              ? `${METCASH_PREFIX}${retailerName.trim()}`
-              : "",
-          });
+          const cleanId = accountId.trim();
+
+          if (!map.has(cleanId)) {
+            map.set(cleanId, {
+              accountId: cleanId,
+              name: `${PREFIX}${rawName.trim()}`,
+            });
+          }
         });
 
-        setRows(parsed);
-        setStep(2);
+        const uniqueRows = Array.from(map.values());
+
+        const ex = [];
+        const con = [];
+        const neu = [];
+
+        /* ---------- STEP 2: XERO CHECK ---------- */
+        for (const row of uniqueRows) {
+          const res = await fetch("/api/xero/check-customer", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(row),
+          });
+
+          const data = await res.json();
+
+          if (data.status === "EXACT_MATCH") {
+            ex.push(data);
+          } 
+          else if (data.status === "NAME_CONFLICT") {
+            con.push(data);
+          } 
+          else {
+            /* ---------- STEP 3: LOOKUP MASTER DB ---------- */
+            const lookup = await fetch("/api/customers/lookup", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ name: row.name }),
+            });
+
+            const db = await lookup.json();
+
+            neu.push({
+              ...row,
+              shippingAddress: db.found
+                ? {
+                    line1: db.customer.address_line1,
+                    city: db.customer.city,
+                    state: db.customer.region,
+                    postcode: db.customer.postal_code,
+                  }
+                : {
+                    line1: "",
+                    city: "",
+                    state: "",
+                    postcode: "",
+                  },
+            });
+          }
+        }
+
+        setExisting(ex);
+        setConflicts(con);
+        setNewCustomers(neu);
+        setLoading(false);
       },
     });
   }
 
-  /* ===============================
-     STEP 2 — CHECK CUSTOMERS IN XERO
-     =============================== */
-  async function checkCustomers() {
+  /* =========================
+     CREATE CUSTOMERS
+     ========================= */
+  async function createCustomers() {
     setLoading(true);
 
-    const uniqueIds = [...new Set(rows.map((r) => r.customerId))];
-    const exist = [];
-    const miss = [];
-
-    for (const id of uniqueIds) {
-      const res = await fetch("/api/xero/check-customer", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ customerId: id }),
-      });
-
-      const data = await res.json();
-
-      if (data.exists) {
-        exist.push({
-          accountId: id,
-          name: data.name,
-        });
-      } else {
-        const row = rows.find((r) => r.customerId === id);
-        miss.push({
-          accountId: id,
-          name: row?.retailerName || "",
+    try {
+      for (const c of newCustomers) {
+        await fetch("/api/xero/create-customer", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            accountId: c.accountId,
+            name: c.name,
+            deliveryAddress: {
+              addressLine1: c.shippingAddress.line1,
+              city: c.shippingAddress.city,
+              region: c.shippingAddress.state,
+              postalCode: c.shippingAddress.postcode,
+              country: "Australia",
+            },
+          }),
         });
       }
+
+      alert("✅ Customers created successfully");
+      router.push("/");
+
+    } catch (err) {
+      console.error(err);
+      alert("❌ Failed to create customers");
+    } finally {
+      setLoading(false);
     }
-
-    setExisting(exist);
-    setMissing(miss);
-    setLoading(false);
-    setStep(3);
-  }
-
-  /* ===============================
-     STEP 3 — CREATE CUSTOMERS
-     =============================== */
-  function createCustomers() {
-    alert(`Create ${missing.length} new customers in Xero`);
   }
 
   return (
-    <div style={styles.page}>
-      <div style={styles.container}>
+    <div className="min-h-screen bg-[#faf7fb]">
 
-        {/* HEADER */}
-        <div style={styles.header}>
-          <h2>Create Customers (Xero)</h2>
-          <span style={styles.back} onClick={() => window.history.back()}>
-            ← Back
-          </span>
-        </div>
+      {/* HEADER */}
+      <header className="flex items-center justify-between px-8 py-5 bg-white border-b">
+        <h1 className="text-xl font-bold text-violet-700">
+          Create Customers (Xero)
+        </h1>
+        <button onClick={() => router.push("/")}>← Home</button>
+      </header>
 
-        {/* STEPPER */}
-        <div style={styles.stepper}>
-          {["Upload CSV", "Check Customers", "Review"].map((label, i) => (
-            <div key={i} style={styles.step}>
-              <div
-                style={{
-                  ...styles.circle,
-                  background: step >= i + 1 ? "#ec4899" : "#cbd5e1",
-                }}
-              >
-                {i + 1}
-              </div>
-              <span>{label}</span>
-            </div>
-          ))}
-        </div>
+      <main className="max-w-7xl mx-auto px-8 py-10">
 
-        <div style={styles.card}>
+        {/* UPLOAD */}
+     {/* UPLOAD */}
+<div className="bg-white p-8 rounded-xl shadow mb-8 text-center">
+  <p className="font-semibold mb-3">Upload CSV</p>
 
-          {/* STEP 1 */}
-          {step === 1 && (
-            <>
-              <h3>Upload CSV</h3>
-              <div style={styles.uploadBox}>
-                <input
-                  type="file"
-                  accept=".csv"
-                  onChange={handleFile}
-                  style={styles.fileInput}
-                />
-                <p><b>Click to upload</b> or drag CSV here</p>
-                {fileName && <span style={styles.fileName}>{fileName}</span>}
-              </div>
-            </>
-          )}
+  <label className="inline-block">
+    <span className="px-6 py-2 bg-violet-600 text-white rounded-lg cursor-pointer font-semibold">
+      Choose File
+    </span>
+    <input
+      type="file"
+      accept=".csv"
+      onChange={handleFile}
+      className="hidden"
+    />
+  </label>
 
-          {/* STEP 2 — COUNT ONLY */}
-          {step === 2 && (
-            <>
-              <h3>Check Customers</h3>
-              <p>
-                Rows parsed: <b>{rows.length}</b>
-              </p>
+  {fileName && (
+    <p className="text-sm text-violet-600 mt-3">{fileName}</p>
+  )}
 
-              <button style={styles.primaryBtn} onClick={checkCustomers}>
-                Check Customers in Xero
-              </button>
-            </>
-          )}
+  {loading && (
+    <p className="mt-4 text-sm">⏳ Checking customers…</p>
+  )}
+</div>
 
-          {/* STEP 3 — REVIEW */}
-          {step === 3 && (
-            <>
-              <div style={styles.stats}>
-                <Stat title="Total" value={existing.length + missing.length} />
-                <Stat title="Existing" value={existing.length} />
-                <Stat title="New" value={missing.length} />
-              </div>
 
-              <div style={styles.tables}>
-                {/* EXISTING */}
-                <div style={styles.existingBox}>
-                  <h4>Existing Customers</h4>
-                  <div style={styles.tableWrap}>
-                    <table style={styles.table}>
-                      <thead>
-                        <tr>
-                          <th style={styles.th}>Account ID</th>
-                          <th style={styles.th}>Customer Name</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {existing.map((c) => (
-                          <tr key={c.accountId}>
-                            <td style={styles.tdId}>{c.accountId}</td>
-                            <td style={styles.tdName}>{c.name}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
+        {/* STATS */}
+        {!loading && (
+          <div className="grid grid-cols-3 gap-6 mb-10">
+            <Stat title="Existing" value={existing.length} />
+            <Stat title="Name Conflicts" value={conflicts.length} />
+            <Stat title="New Customers" value={newCustomers.length} />
+          </div>
+        )}
 
-                {/* NEW */}
-                <div style={styles.newBox}>
-                  <h4>New Customers</h4>
-                  <div style={styles.tableWrap}>
-                    <table style={styles.table}>
-                      <thead>
-                        <tr>
-                          <th style={styles.th}>Account ID</th>
-                          <th style={styles.th}>Customer Name</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {missing.map((c) => (
-                          <tr key={c.accountId}>
-                            <td style={styles.tdId}>{c.accountId}</td>
-                            <td style={styles.tdName}>{c.name}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
+        {/* EXISTING */}
+        <Table
+          title="Existing Customers"
+          headers={["Account ID", "Name"]}
+          rows={existing.map((r) => [r.accountId, r.name])}
+        />
 
-                  {missing.length > 0 && (
-                    <button style={styles.createBtn} onClick={createCustomers}>
-                      Create New Customers
-                    </button>
-                  )}
-                </div>
-              </div>
-            </>
-          )}
+        {/* CONFLICTS */}
+        <Table
+          title="⚠️ Name Conflicts"
+          headers={["Incoming → Existing", "Name"]}
+          rows={conflicts.map((r) => [
+            `${r.incomingAccountId} → ${r.existingAccountId}`,
+            r.name,
+          ])}
+        />
 
-          {loading && <p>⏳ Checking customers…</p>}
-        </div>
-      </div>
+        {/* NEW CUSTOMERS */}
+        {newCustomers.length > 0 && (
+          <div className="bg-white p-6 rounded-xl shadow">
+            <h3 className="text-lg font-semibold mb-4">🆕 New Customers</h3>
+
+            <table className="w-full text-sm">
+              <thead className="bg-gray-100">
+                <tr>
+                  <th className="p-2">Account</th>
+                  <th className="p-2">Name</th>
+                  <th className="p-2">Address (from DB)</th>
+                </tr>
+              </thead>
+              <tbody>
+                {newCustomers.map((c) => (
+                  <tr key={c.accountId} className="border-t">
+                    <td className="p-2">{c.accountId}</td>
+                    <td className="p-2">{c.name}</td>
+                    <td className="p-2">
+                      {c.shippingAddress.line1 ? (
+                        <>
+                          <div>{c.shippingAddress.line1}</div>
+                          <div>
+                            {c.shippingAddress.city},{" "}
+                            {c.shippingAddress.state}{" "}
+                            {c.shippingAddress.postcode}
+                          </div>
+                        </>
+                      ) : (
+                        <span className="text-red-500">Not found in DB</span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+
+            <button
+              onClick={createCustomers}
+              className="mt-6 w-full bg-pink-600 text-white py-2 rounded-xl font-semibold"
+            >
+              Create Customers
+            </button>
+          </div>
+        )}
+
+      </main>
     </div>
   );
 }
 
-/* ===============================
-   SMALL COMPONENT
-   =============================== */
+/* ================= COMPONENTS ================= */
+
 function Stat({ title, value }) {
   return (
-    <div style={styles.statCard}>
-      <h3>{value}</h3>
+    <div className="bg-white rounded-xl p-6 text-center shadow">
+      <h3 className="text-2xl font-bold">{value}</h3>
       <p>{title}</p>
     </div>
   );
 }
 
-/* ===============================
-   STYLES (UNCHANGED)
-   =============================== */
-const styles = {
-  page: {
-    minHeight: "100vh",
-    background: "#fff7fb",
-    display: "flex",
-    justifyContent: "center",
-    paddingTop: 40,
-  },
-  container: { width: "100%", maxWidth: 1100 },
-  header: {
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: 20,
-  },
-  back: { cursor: "pointer", color: "#a855f7" },
-  stepper: { display: "flex", justifyContent: "space-between", marginBottom: 20 },
-  step: { display: "flex", alignItems: "center", gap: 8 },
-  circle: {
-    width: 32,
-    height: 32,
-    borderRadius: "50%",
-    color: "#fff",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    fontWeight: "bold",
-  },
-  card: {
-    background: "#fff",
-    padding: 30,
-    borderRadius: 14,
-    boxShadow: "0 10px 30px rgba(0,0,0,.08)",
-  },
-  uploadBox: {
-    border: "2px dashed #d8b4fe",
-    padding: 40,
-    borderRadius: 12,
-    textAlign: "center",
-    position: "relative",
-  },
-  fileInput: { position: "absolute", inset: 0, opacity: 0, cursor: "pointer" },
-  fileName: { marginTop: 10, display: "block", color: "#ec4899" },
-  primaryBtn: {
-    marginTop: 16,
-    padding: "12px 20px",
-    background: "#ec4899",
-    color: "#fff",
-    border: "none",
-    borderRadius: 8,
-    cursor: "pointer",
-  },
-  stats: { display: "flex", gap: 20, marginBottom: 20 },
-  statCard: {
-    flex: 1,
-    background: "#faf5ff",
-    padding: 20,
-    borderRadius: 10,
-    textAlign: "center",
-  },
-  tables: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20 },
-  existingBox: {
-    background: "#ecfdf5",
-    border: "1px solid #86efac",
-    padding: 16,
-    borderRadius: 12,
-  },
-  newBox: {
-    background: "#fffbeb",
-    border: "1px solid #fde68a",
-    padding: 16,
-    borderRadius: 12,
-  },
-  tableWrap: { maxHeight: 260, overflowY: "auto", marginTop: 8 },
-  table: { width: "100%", borderCollapse: "collapse", fontSize: 14 },
-  th: {
-    textAlign: "left",
-    padding: "8px 6px",
-    fontWeight: 600,
-    background: "#f1f5f9",
-  },
-  tdId: { padding: "8px 6px", fontWeight: 500, width: 120 },
-  tdName: { padding: "8px 6px", lineHeight: 1.4 },
-  createBtn: {
-    marginTop: 14,
-    width: "100%",
-    padding: "12px",
-    background: "#ec4899",
-    color: "#fff",
-    border: "none",
-    borderRadius: 10,
-    fontWeight: 600,
-    cursor: "pointer",
-  },
-};
+function Table({ title, headers, rows }) {
+  if (!rows.length) return null;
+  return (
+    <div className="bg-white rounded-xl p-6 mb-8 shadow">
+      <h3 className="text-lg font-semibold mb-4">{title}</h3>
+      <table className="w-full text-sm">
+        <thead className="bg-gray-100">
+          <tr>
+            {headers.map((h) => (
+              <th key={h} className="p-2 text-left">{h}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r, i) => (
+            <tr key={i} className="border-t">
+              {r.map((c, j) => (
+                <td key={j} className="p-2">{c}</td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
