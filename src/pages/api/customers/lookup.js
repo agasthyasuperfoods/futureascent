@@ -2,14 +2,8 @@ import { query } from "../../../lib/db";
 
 export default async function handler(req, res) {
   try {
-    if (req.method !== "POST") {
+    if (req.method !== "GET") {
       return res.status(405).json({ error: "Method not allowed" });
-    }
-
-    const { name } = req.body;
-
-    if (!name) {
-      return res.status(400).json({ error: "name required" });
     }
 
     const result = await query(
@@ -21,25 +15,23 @@ export default async function handler(req, res) {
         city,
         region,
         postal_code,
-        country
+        country,
+        source,
+        is_active,
+        created_at,
+        updated_at
       FROM customers
-      WHERE LOWER(name) = LOWER($1)
-      LIMIT 1
+      ORDER BY created_at DESC
       `,
-      [name]
+      []
     );
 
-    if (result.rows.length === 0) {
-      return res.json({ found: false });
-    }
-
-    return res.json({
-      found: true,
-      customer: result.rows[0],
+    return res.status(200).json({
+      retailers: result.rows,
     });
 
   } catch (err) {
-    console.error("LOOKUP ERROR:", err);
+    console.error("RETAILERS LIST ERROR:", err);
     return res.status(500).json({ error: "Server error" });
   }
 }

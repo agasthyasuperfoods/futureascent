@@ -66,7 +66,7 @@ export default function OperationsHome() {
             title="Retailer Master Data"
             desc="Maintain retailer address,  contact & delivery master data."
             button="Manage Retailers"
-            onClick={() => router.push("/retailers/master")}
+            onClick={() => router.push("/Manageretailer")}
           />
 
           {/* SORTED – BULK TURN IN */}
